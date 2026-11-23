@@ -210,5 +210,108 @@ void main() {
       expect(cubit.state.status, SettingsStatus.saved);
       expect(cubit.state.settings.defaultStaff, 'Trần Thị Bình');
     });
+
+    test('repeated identical validation errors increment errorNonce', () async {
+      final cubit = createCubit();
+      addTearDown(cubit.close);
+
+      final emitted = <SettingsState>[];
+      final sub = cubit.stream.listen(emitted.add);
+      addTearDown(sub.cancel);
+
+      await cubit.saveSettings(const AppSettings(serverUrl: 'ftp://bad-host'));
+      await cubit.saveSettings(const AppSettings(serverUrl: 'ftp://bad-host'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(emitted, hasLength(2));
+      expect(emitted[0].status, SettingsStatus.error);
+      expect(emitted[1].status, SettingsStatus.error);
+      expect(emitted[1].errorNonce, greaterThan(emitted[0].errorNonce));
+    });
+
+    testWidgets(
+        'SettingsPage preserves unsaved edits and shows SnackBar on scan error and repeated errors',
+        (tester) async {
+      var scanCalls = 0;
+      final cubit = createCubit(
+        bluetoothScanner: () async {
+          scanCalls++;
+          throw StateError('Chưa cấp quyền Bluetooth');
+        },
+      );
+      addTearDown(cubit.close);
+      await cubit.loadSettings();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: BlocProvider<SettingsCubit>.value(
+            value: cubit,
+            child: const SettingsPage(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Edit store name without saving.
+      final storeNameField =
+          find.widgetWithText(TextFormField, 'Cửa hàng Demo POS');
+      await tester.enterText(storeNameField, 'Cửa hàng Chưa Lưu');
+      await tester.pump();
+
+      final listScrollable = find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+
+      // Switch printer mode to Bluetooth and tap Quét.
+      await tester.scrollUntilVisible(
+        find.text('Bluetooth'),
+        200,
+        scrollable: listScrollable,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Bluetooth'));
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.text('Quét'),
+        200,
+        scrollable: listScrollable,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Quét'));
+      await tester.pumpAndSettle();
+
+      expect(scanCalls, 1);
+      expect(
+        find.textContaining('Lỗi quét Bluetooth'),
+        findsOneWidget,
+      );
+
+      // Dismiss current SnackBar and trigger the same scan error a second time.
+      ScaffoldMessenger.of(
+        tester.element(find.byType(SettingsPage)),
+      ).clearSnackBars();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Quét'));
+      await tester.pumpAndSettle();
+
+      expect(scanCalls, 2);
+      expect(
+        find.textContaining('Lỗi quét Bluetooth'),
+        findsOneWidget,
+      );
+
+      // Scroll back up to verify unsaved store name edit was preserved.
+      await tester.scrollUntilVisible(
+        find.text('Cửa hàng Chưa Lưu'),
+        -200,
+        scrollable: listScrollable,
+      );
+      expect(find.text('Cửa hàng Chưa Lưu'), findsOneWidget);
+    });
   });
 }

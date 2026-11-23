@@ -12,6 +12,7 @@ class SettingsState extends Equatable {
     this.bluetoothDevices = const [],
     this.isScanningBluetooth = false,
     this.errorMessage,
+    this.errorNonce = 0,
   });
 
   final SettingsStatus status;
@@ -19,6 +20,7 @@ class SettingsState extends Equatable {
   final List<BluetoothPrinterDevice> bluetoothDevices;
   final bool isScanningBluetooth;
   final String? errorMessage;
+  final int errorNonce;
 
   SettingsState copyWith({
     SettingsStatus? status,
@@ -26,6 +28,7 @@ class SettingsState extends Equatable {
     List<BluetoothPrinterDevice>? bluetoothDevices,
     bool? isScanningBluetooth,
     String? errorMessage,
+    int? errorNonce,
     bool clearError = false,
   }) {
     return SettingsState(
@@ -34,6 +37,7 @@ class SettingsState extends Equatable {
       bluetoothDevices: bluetoothDevices ?? this.bluetoothDevices,
       isScanningBluetooth: isScanningBluetooth ?? this.isScanningBluetooth,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
+      errorNonce: errorNonce ?? this.errorNonce,
     );
   }
 
@@ -44,5 +48,6 @@ class SettingsState extends Equatable {
         bluetoothDevices,
         isScanningBluetooth,
         errorMessage,
+        errorNonce,
       ];
 }

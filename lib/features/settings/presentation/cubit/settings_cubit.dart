@@ -37,12 +37,7 @@ class SettingsCubit extends Cubit<SettingsState> {
       );
     } catch (error) {
       if (isClosed) return;
-      emit(
-        state.copyWith(
-          status: SettingsStatus.error,
-          errorMessage: 'Không thể tải cấu hình: $error',
-        ),
-      );
+      _emitError('Không thể tải cấu hình: $error', status: SettingsStatus.error);
     }
   }
 
@@ -50,32 +45,26 @@ class SettingsCubit extends Cubit<SettingsState> {
   Future<bool> saveSettings(AppSettings settings) async {
     final normalizedUrl = normalizeServerUrl(settings.serverUrl);
     if (!isValidServerUrl(normalizedUrl)) {
-      emit(
-        state.copyWith(
-          status: SettingsStatus.error,
-          errorMessage: 'Server URL phải bắt đầu bằng http:// hoặc https://',
-        ),
+      _emitError(
+        'Server URL phải bắt đầu bằng http:// hoặc https://',
+        status: SettingsStatus.error,
       );
       return false;
     }
 
     if (settings.printer.lanPort < 1 || settings.printer.lanPort > 65535) {
-      emit(
-        state.copyWith(
-          status: SettingsStatus.error,
-          errorMessage: 'Port máy in LAN phải trong khoảng 1 - 65535',
-        ),
+      _emitError(
+        'Port máy in LAN phải trong khoảng 1 - 65535',
+        status: SettingsStatus.error,
       );
       return false;
     }
 
     if (settings.printer.paperWidthMm != 58 &&
         settings.printer.paperWidthMm != 80) {
-      emit(
-        state.copyWith(
-          status: SettingsStatus.error,
-          errorMessage: 'Khổ giấy chỉ hỗ trợ 58mm hoặc 80mm',
-        ),
+      _emitError(
+        'Khổ giấy chỉ hỗ trợ 58mm hoặc 80mm',
+        status: SettingsStatus.error,
       );
       return false;
     }
@@ -116,12 +105,7 @@ class SettingsCubit extends Cubit<SettingsState> {
       return true;
     } catch (error) {
       if (isClosed) return false;
-      emit(
-        state.copyWith(
-          status: SettingsStatus.error,
-          errorMessage: 'Lưu cấu hình thất bại: $error',
-        ),
-      );
+      _emitError('Lưu cấu hình thất bại: $error', status: SettingsStatus.error);
       return false;
     }
   }
@@ -141,13 +125,26 @@ class SettingsCubit extends Cubit<SettingsState> {
       );
     } catch (error) {
       if (isClosed) return;
-      emit(
-        state.copyWith(
-          isScanningBluetooth: false,
-          errorMessage: 'Lỗi quét Bluetooth: $error',
-        ),
+      _emitError(
+        'Lỗi quét Bluetooth: $error',
+        isScanningBluetooth: false,
       );
     }
+  }
+
+  void _emitError(
+    String message, {
+    SettingsStatus? status,
+    bool? isScanningBluetooth,
+  }) {
+    emit(
+      state.copyWith(
+        status: status,
+        isScanningBluetooth: isScanningBluetooth,
+        errorMessage: message,
+        errorNonce: state.errorNonce + 1,
+      ),
+    );
   }
 
   static String normalizeServerUrl(String raw) {

@@ -121,10 +121,25 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
       ),
       body: BlocConsumer<SettingsCubit, SettingsState>(
-        listenWhen: (previous, current) =>
-            previous.status != current.status ||
-            previous.errorMessage != current.errorMessage,
+        listenWhen: (previous, current) {
+          final statusSynced = previous.status != current.status &&
+              current.errorMessage == null &&
+              (current.status == SettingsStatus.loaded ||
+                  current.status == SettingsStatus.saved);
+          final errorRaised = current.errorMessage != null &&
+              (previous.errorNonce != current.errorNonce ||
+                  previous.errorMessage != current.errorMessage);
+          return statusSynced || errorRaised;
+        },
         listener: (context, state) {
+          if (state.errorMessage != null) {
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(
+                SnackBar(content: Text(state.errorMessage!)),
+              );
+            return;
+          }
           if (state.status == SettingsStatus.loaded) {
             _applySettingsToForm(state.settings);
           } else if (state.status == SettingsStatus.saved) {
@@ -133,12 +148,6 @@ class _SettingsPageState extends State<SettingsPage> {
               ..hideCurrentSnackBar()
               ..showSnackBar(
                 const SnackBar(content: Text('Đã lưu cấu hình POS')),
-              );
-          } else if (state.errorMessage != null) {
-            ScaffoldMessenger.of(context)
-              ..hideCurrentSnackBar()
-              ..showSnackBar(
-                SnackBar(content: Text(state.errorMessage!)),
               );
           }
         },
