@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:demo_application/core/utils/currency_formatter.dart';
 import 'package:demo_application/features/catalog/domain/entities/product.dart';
 import 'package:demo_application/features/catalog/presentation/cubit/catalog_state.dart';
@@ -5,7 +7,12 @@ import 'package:demo_application/features/catalog/presentation/widgets/product_c
 import 'package:demo_application/features/catalog/presentation/widgets/video_detail_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
 import 'package:shimmer/shimmer.dart';
+import 'package:video_player/video_player.dart';
+
+class _MockVideoPlayerController extends Mock
+    implements VideoPlayerController {}
 
 void main() {
   const sampleProduct = Product(
@@ -206,6 +213,125 @@ void main() {
         await tester.tap(find.byKey(const Key('add-to-cart-1')));
         await tester.pump();
         expect(added, isTrue);
+      },
+    );
+  });
+
+  group('VideoDetailDialog', () {
+    (_MockVideoPlayerController, ValueNotifier<VideoPlayerValue>)
+        createFakeController() {
+      final controller = _MockVideoPlayerController();
+      final notifier = ValueNotifier<VideoPlayerValue>(
+        const VideoPlayerValue(duration: Duration(seconds: 10)),
+      );
+      when(() => controller.value).thenAnswer((_) => notifier.value);
+      when(() => controller.addListener(any())).thenAnswer(
+        (inv) => notifier.addListener(inv.positionalArguments[0] as VoidCallback),
+      );
+      when(() => controller.removeListener(any())).thenAnswer(
+        (inv) =>
+            notifier.removeListener(inv.positionalArguments[0] as VoidCallback),
+      );
+      when(() => controller.playerId)
+          .thenReturn(VideoPlayerController.kUninitializedPlayerId);
+      when(() => controller.setLooping(any())).thenAnswer((_) async {});
+      when(() => controller.dispose()).thenAnswer((_) async {
+        notifier.dispose();
+      });
+      return (controller, notifier);
+    }
+
+    testWidgets(
+      'updates play/pause overlay reactively via ValueListenableBuilder when controller updates asynchronously',
+      (tester) async {
+        final (controller, notifier) = createFakeController();
+        when(() => controller.initialize()).thenAnswer((_) async {
+          notifier.value = notifier.value.copyWith(
+            isInitialized: true,
+            size: const Size(160, 90),
+          );
+        });
+        when(() => controller.play()).thenAnswer((_) async {
+          await Future<void>.delayed(Duration.zero);
+          notifier.value = notifier.value.copyWith(isPlaying: true);
+        });
+        when(() => controller.pause()).thenAnswer((_) async {
+          await Future<void>.delayed(Duration.zero);
+          notifier.value = notifier.value.copyWith(isPlaying: false);
+        });
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: VideoDetailDialog(
+                product: sampleProduct,
+                media: videoMedia,
+                controllerFactory: (_) => controller,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.byIcon(Icons.play_arrow_rounded), findsNothing);
+
+        await tester.tap(find.byKey(const Key('video-player-surface')));
+        await tester.pumpAndSettle();
+        verify(() => controller.pause()).called(1);
+        expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+
+        await tester.tap(find.byKey(const Key('video-player-surface')));
+        await tester.pumpAndSettle();
+        verify(() => controller.play()).called(2);
+        expect(find.byIcon(Icons.play_arrow_rounded), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'does not call setLooping or play on disposed controller when closed while initialize is in flight',
+      (tester) async {
+        final (controller, _) = createFakeController();
+        final initCompleter = Completer<void>();
+        when(() => controller.initialize()).thenAnswer((_) => initCompleter.future);
+        when(() => controller.play()).thenAnswer((_) async {});
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: Center(
+                  child: TextButton(
+                    onPressed: () {
+                      showDialog<void>(
+                        context: context,
+                        builder: (_) => VideoDetailDialog(
+                          product: sampleProduct,
+                          media: videoMedia,
+                          controllerFactory: (_) => controller,
+                        ),
+                      );
+                    },
+                    child: const Text('Open'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        await tester.tap(find.text('Open'));
+        await tester.pump();
+        verify(() => controller.initialize()).called(1);
+
+        await tester.tap(find.text('Đóng'));
+        await tester.pumpAndSettle();
+        verify(() => controller.dispose()).called(1);
+
+        initCompleter.complete();
+        await tester.pump();
+
+        verifyNever(() => controller.setLooping(any()));
+        verifyNever(() => controller.play());
       },
     );
   });

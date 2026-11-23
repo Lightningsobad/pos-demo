@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:demo_application/core/utils/currency_formatter.dart';
 import 'package:demo_application/features/catalog/domain/entities/product.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +12,7 @@ class VideoDetailDialog extends StatefulWidget {
     required this.product,
     required this.media,
     this.videoBuilder,
+    this.controllerFactory,
   });
 
   final Product product;
@@ -17,6 +20,9 @@ class VideoDetailDialog extends StatefulWidget {
 
   /// Optional test hook to render a custom video surface without platform codecs.
   final Widget Function(BuildContext context, ProductMedia media)? videoBuilder;
+
+  /// Optional factory hook for injecting a [VideoPlayerController] in tests.
+  final VideoPlayerController Function(Uri uri)? controllerFactory;
 
   @override
   State<VideoDetailDialog> createState() => _VideoDetailDialogState();
@@ -36,7 +42,9 @@ class _VideoDetailDialogState extends State<VideoDetailDialog> {
         _hasError = true;
         return;
       }
-      final controller = VideoPlayerController.networkUrl(uri);
+      final createController =
+          widget.controllerFactory ?? VideoPlayerController.networkUrl;
+      final controller = createController(uri);
       _controller = controller;
       _initializeController(controller);
     }
@@ -45,7 +53,9 @@ class _VideoDetailDialogState extends State<VideoDetailDialog> {
   Future<void> _initializeController(VideoPlayerController controller) async {
     try {
       await controller.initialize();
+      if (!mounted) return;
       await controller.setLooping(true);
+      if (!mounted) return;
       await controller.play();
       if (!mounted) return;
       setState(() {
@@ -68,13 +78,11 @@ class _VideoDetailDialogState extends State<VideoDetailDialog> {
   void _togglePlayback() {
     final controller = _controller;
     if (controller == null || !_isInitialized) return;
-    setState(() {
-      if (controller.value.isPlaying) {
-        controller.pause();
-      } else {
-        controller.play();
-      }
-    });
+    if (controller.value.isPlaying) {
+      unawaited(controller.pause());
+    } else {
+      unawaited(controller.play());
+    }
   }
 
   @override
@@ -167,34 +175,40 @@ class _VideoDetailDialogState extends State<VideoDetailDialog> {
         child: CircularProgressIndicator(color: Colors.white),
       );
     }
-    return GestureDetector(
-      onTap: _togglePlayback,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Center(
-            child: AspectRatio(
-              aspectRatio: controller.value.aspectRatio > 0
-                  ? controller.value.aspectRatio
-                  : 16 / 9,
-              child: VideoPlayer(controller),
-            ),
+    return ValueListenableBuilder<VideoPlayerValue>(
+      valueListenable: controller,
+      builder: (context, value, _) {
+        return GestureDetector(
+          key: const Key('video-player-surface'),
+          behavior: HitTestBehavior.opaque,
+          onTap: _togglePlayback,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Center(
+                child: AspectRatio(
+                  aspectRatio:
+                      value.aspectRatio > 0 ? value.aspectRatio : 16 / 9,
+                  child: VideoPlayer(controller),
+                ),
+              ),
+              if (!value.isPlaying)
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: const BoxDecoration(
+                    color: Colors.black54,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.play_arrow_rounded,
+                    color: Colors.white,
+                    size: 36,
+                  ),
+                ),
+            ],
           ),
-          if (!controller.value.isPlaying)
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: const BoxDecoration(
-                color: Colors.black54,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.play_arrow_rounded,
-                color: Colors.white,
-                size: 36,
-              ),
-            ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
