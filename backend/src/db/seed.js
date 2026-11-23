@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateSync } from 'node:zlib';
@@ -11,6 +11,11 @@ const IMAGE_SPECS = [
   { name: 'prod_4.png', rgb: [239, 68, 68] },
 ];
 const VIDEO_FILENAME = 'sample_promo.mp4';
+const SAMPLE_VIDEO_SOURCE = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../assets',
+  VIDEO_FILENAME,
+);
 
 const PRODUCT_PREFIXES = [
   'Cà phê sữa đá',
@@ -94,145 +99,6 @@ function createSolidPng(width, height, [r, g, b]) {
   ]);
 }
 
-function mp4Box(type, ...parts) {
-  const payload = parts.length === 1 ? parts[0] : Buffer.concat(parts);
-  const header = Buffer.allocUnsafe(8);
-  header.writeUInt32BE(8 + payload.length, 0);
-  header.write(type, 4, 4, 'ascii');
-  return Buffer.concat([header, payload]);
-}
-
-function mp4FullBox(type, version, flags, ...parts) {
-  const vf = Buffer.allocUnsafe(4);
-  vf.writeUInt32BE(((version & 0xff) << 24) | (flags & 0xffffff), 0);
-  return mp4Box(type, vf, ...parts);
-}
-
-function createIdentityMatrix() {
-  const m = Buffer.alloc(36);
-  m.writeUInt32BE(0x00010000, 0);
-  m.writeUInt32BE(0x00010000, 16);
-  m.writeUInt32BE(0x40000000, 32);
-  return m;
-}
-
-function createMinimalMp4() {
-  const ftyp = mp4Box(
-    'ftyp',
-    Buffer.from('isom', 'ascii'),
-    Buffer.from([0x00, 0x00, 0x02, 0x00]),
-    Buffer.from('isomiso2avc1mp41', 'ascii'),
-  );
-
-  // Minimal 1-sample H.264 payload (~2KB) inside mdat
-  const mdatPayload = Buffer.alloc(2048, 0);
-  // AVCC length-prefixed IDR slice placeholder header
-  mdatPayload.writeUInt32BE(mdatPayload.length - 4, 0);
-  mdatPayload[4] = 0x65;
-
-  const buildMoov = (chunkOffset) => {
-    const mvhdBody = Buffer.alloc(96);
-    mvhdBody.writeUInt32BE(1000, 8); // timescale
-    mvhdBody.writeUInt32BE(1000, 12); // duration
-    mvhdBody.writeUInt32BE(0x00010000, 16); // rate 1.0
-    mvhdBody.writeUInt16BE(0x0100, 20); // volume 1.0
-    createIdentityMatrix().copy(mvhdBody, 32);
-    mvhdBody.writeUInt32BE(2, 92); // next_track_ID
-    const mvhd = mp4FullBox('mvhd', 0, 0, mvhdBody);
-
-    const tkhdBody = Buffer.alloc(80);
-    tkhdBody.writeUInt32BE(1, 8); // track_ID
-    tkhdBody.writeUInt32BE(1000, 16); // duration
-    createIdentityMatrix().copy(tkhdBody, 36);
-    tkhdBody.writeUInt32BE(16 << 16, 72); // width
-    tkhdBody.writeUInt32BE(16 << 16, 76); // height
-    const tkhd = mp4FullBox('tkhd', 0, 3, tkhdBody);
-
-    const mdhdBody = Buffer.alloc(20);
-    mdhdBody.writeUInt32BE(1000, 8); // timescale
-    mdhdBody.writeUInt32BE(1000, 12); // duration
-    mdhdBody.writeUInt16BE(0x55c4, 16); // 'und'
-    const mdhd = mp4FullBox('mdhd', 0, 0, mdhdBody);
-
-    const hdlrBody = Buffer.concat([
-      Buffer.alloc(4),
-      Buffer.from('vide', 'ascii'),
-      Buffer.alloc(12),
-      Buffer.from('VideoHandler\0', 'ascii'),
-    ]);
-    const hdlr = mp4FullBox('hdlr', 0, 0, hdlrBody);
-
-    const vmhd = mp4FullBox('vmhd', 0, 1, Buffer.alloc(8));
-    const urlBox = mp4FullBox('url ', 0, 1);
-    const drefCount = Buffer.allocUnsafe(4);
-    drefCount.writeUInt32BE(1, 0);
-    const dinf = mp4Box('dinf', mp4FullBox('dref', 0, 0, drefCount, urlBox));
-
-    // Minimal avcC (baseline profile, level 1.0, 16x16)
-    const sps = Buffer.from([0x67, 0x42, 0xc0, 0x0a, 0xd9, 0x0f, 0x88, 0x84]);
-    const pps = Buffer.from([0x68, 0xce, 0x3c, 0x80]);
-    const avcC = mp4Box(
-      'avcC',
-      Buffer.from([0x01, 0x42, 0xc0, 0x0a, 0xff, 0xe1, 0x00, sps.length]),
-      sps,
-      Buffer.from([0x01, 0x00, pps.length]),
-      pps,
-    );
-
-    const avc1Body = Buffer.alloc(78);
-    avc1Body.writeUInt16BE(1, 6); // data_reference_index
-    avc1Body.writeUInt16BE(16, 24); // width
-    avc1Body.writeUInt16BE(16, 26); // height
-    avc1Body.writeUInt32BE(0x00480000, 28); // horizresolution 72 dpi
-    avc1Body.writeUInt32BE(0x00480000, 32); // vertresolution 72 dpi
-    avc1Body.writeUInt16BE(1, 40); // frame_count
-    avc1Body.writeUInt16BE(0x0018, 74); // depth 24
-    avc1Body.writeInt16BE(-1, 76); // pre_defined
-    const avc1 = mp4Box('avc1', avc1Body, avcC);
-
-    const stsdCount = Buffer.allocUnsafe(4);
-    stsdCount.writeUInt32BE(1, 0);
-    const stsd = mp4FullBox('stsd', 0, 0, stsdCount, avc1);
-
-    const sttsBody = Buffer.allocUnsafe(12);
-    sttsBody.writeUInt32BE(1, 0);
-    sttsBody.writeUInt32BE(1, 4);
-    sttsBody.writeUInt32BE(1000, 8);
-    const stts = mp4FullBox('stts', 0, 0, sttsBody);
-
-    const stscBody = Buffer.allocUnsafe(16);
-    stscBody.writeUInt32BE(1, 0);
-    stscBody.writeUInt32BE(1, 4);
-    stscBody.writeUInt32BE(1, 8);
-    stscBody.writeUInt32BE(1, 12);
-    const stsc = mp4FullBox('stsc', 0, 0, stscBody);
-
-    const stszBody = Buffer.allocUnsafe(12);
-    stszBody.writeUInt32BE(0, 0);
-    stszBody.writeUInt32BE(1, 4);
-    stszBody.writeUInt32BE(mdatPayload.length, 8);
-    const stsz = mp4FullBox('stsz', 0, 0, stszBody);
-
-    const stcoBody = Buffer.allocUnsafe(8);
-    stcoBody.writeUInt32BE(1, 0);
-    stcoBody.writeUInt32BE(chunkOffset, 4);
-    const stco = mp4FullBox('stco', 0, 0, stcoBody);
-
-    const stbl = mp4Box('stbl', stsd, stts, stsc, stsz, stco);
-    const minf = mp4Box('minf', vmhd, dinf, stbl);
-    const mdia = mp4Box('mdia', mdhd, hdlr, minf);
-    const trak = mp4Box('trak', tkhd, mdia);
-    return mp4Box('moov', mvhd, trak);
-  };
-
-  // Compute exact stco offset (ftyp + moov + 8-byte mdat header)
-  const draftMoov = buildMoov(0);
-  const moov = buildMoov(ftyp.length + draftMoov.length + 8);
-  const mdat = mp4Box('mdat', mdatPayload);
-
-  return Buffer.concat([ftyp, moov, mdat]);
-}
-
 /**
  * Ensure sample PNG images and MP4 video (< 5MB each) exist in mediaDir.
  * @param {string} mediaDir
@@ -253,8 +119,9 @@ export function ensureSampleMedia(mediaDir) {
   });
 
   const video = join(mediaDir, VIDEO_FILENAME);
-  if (!existsSync(video)) {
-    writeFileSync(video, createMinimalMp4());
+  const sourceStats = statSync(SAMPLE_VIDEO_SOURCE);
+  if (!existsSync(video) || statSync(video).size < sourceStats.size) {
+    copyFileSync(SAMPLE_VIDEO_SOURCE, video);
   }
 
   return { images, video };

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:demo_application/app.dart';
@@ -8,6 +9,7 @@ import 'package:demo_application/features/invoice/domain/entities/invoice.dart';
 import 'package:demo_application/features/invoice/domain/repositories/invoice_repository.dart';
 import 'package:demo_application/features/invoice/domain/services/printer_service.dart';
 import 'package:demo_application/features/settings/domain/entities/app_settings.dart';
+import 'package:demo_application/features/settings/presentation/pages/settings_page.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -213,4 +215,68 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Hóa đơn HD-2026-0001'), findsOneWidget);
   });
+
+  testWidgets(
+    'Settings.defaultStaff syncs to CartCubit on startup and when Settings is saved',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({
+        'pos_app_settings_v1': jsonEncode({
+          'serverUrl': 'http://10.0.2.2:3000',
+          'defaultStaff': 'Trần Thị Bình',
+        }),
+      });
+      final prefs = await SharedPreferences.getInstance();
+
+      await tester.pumpWidget(
+        PosDemoApp(
+          sharedPreferences: prefs,
+          dioClient: DioClient(),
+          catalogRepository: _FakeCatalogRepository(),
+          invoiceRepository: _FakeInvoiceRepository(),
+          printerService: _FakePrinterService(),
+          imageBuilder: (_, _) => const SizedBox.expand(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Add a product so CartPage shows the order options staff dropdown.
+      await tester.tap(find.byKey(const Key('add-to-cart-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Giỏ hàng'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('cart_staff_Trần Thị Bình')),
+        findsOneWidget,
+      );
+
+      // Update defaultStaff in Settings and save -> Cart dropdown updates automatically.
+      await tester.tap(find.text('Cài đặt'));
+      await tester.pumpAndSettle();
+      final listScrollable = find
+          .descendant(
+            of: find.byType(SettingsPage),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+      await tester.scrollUntilVisible(
+        find.text('Lê Minh Châu'),
+        200,
+        scrollable: listScrollable,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Lê Minh Châu'));
+      await tester.pump();
+      await tester.tap(find.text('Lưu'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Giỏ hàng'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('cart_staff_Lê Minh Châu')),
+        findsOneWidget,
+      );
+    },
+  );
 }

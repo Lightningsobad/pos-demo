@@ -185,8 +185,9 @@ class _MainShellPageState extends State<MainShellPage> {
     await settingsCubit.loadSettings();
     if (!mounted) return;
 
+    final defaultStaff = settingsCubit.state.settings.defaultStaff;
     unawaited(catalogCubit.loadInitial());
-    unawaited(cartCubit.loadDraftCart());
+    unawaited(cartCubit.loadDraftCart(fallbackStaffName: defaultStaff));
   }
 
   void _switchToTab(int index) {
@@ -279,15 +280,30 @@ class _MainShellPageState extends State<MainShellPage> {
 
   @override
   Widget build(BuildContext context) {
-    return BlocListener<SettingsCubit, SettingsState>(
-      listenWhen: (previous, current) =>
-          current.status == SettingsStatus.saved &&
-          previous.status != SettingsStatus.saved &&
-          previous.settings.serverUrl != current.settings.serverUrl,
-      listener: (context, _) {
-        final catalogCubit = context.read<CatalogCubit>();
-        catalogCubit.loadInitial(query: catalogCubit.state.searchQuery);
-      },
+    return MultiBlocListener(
+      listeners: [
+        BlocListener<SettingsCubit, SettingsState>(
+          listenWhen: (previous, current) =>
+              current.status == SettingsStatus.saved &&
+              previous.status != SettingsStatus.saved &&
+              previous.settings.serverUrl != current.settings.serverUrl,
+          listener: (context, _) {
+            final catalogCubit = context.read<CatalogCubit>();
+            catalogCubit.loadInitial(query: catalogCubit.state.searchQuery);
+          },
+        ),
+        BlocListener<SettingsCubit, SettingsState>(
+          listenWhen: (previous, current) =>
+              current.status == SettingsStatus.saved &&
+              previous.status != SettingsStatus.saved &&
+              previous.settings.defaultStaff != current.settings.defaultStaff,
+          listener: (context, state) {
+            context
+                .read<CartCubit>()
+                .applyDefaultStaff(state.settings.defaultStaff);
+          },
+        ),
+      ],
       child: Scaffold(
         body: IndexedStack(
           index: _currentIndex,

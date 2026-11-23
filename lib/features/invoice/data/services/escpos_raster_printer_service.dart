@@ -34,6 +34,7 @@ class EscPosRasterPrinterService implements PrinterService {
         _bluetoothSender = bluetoothSender ?? _defaultBluetoothSender;
 
   static const Duration tcpConnectTimeout = Duration(seconds: 3);
+  static String? _connectedBluetoothMac;
 
   final PdfInvoiceService _pdfInvoiceService;
   final TcpSocketSender _tcpSender;
@@ -209,16 +210,24 @@ class EscPosRasterPrinterService implements PrinterService {
     String macAddress,
     List<int> bytes,
   ) async {
-    final alreadyConnected = await PrintBluetoothThermal.connectionStatus;
+    var alreadyConnected = await PrintBluetoothThermal.connectionStatus;
+    if (alreadyConnected && _connectedBluetoothMac != macAddress) {
+      await PrintBluetoothThermal.disconnect;
+      _connectedBluetoothMac = null;
+      alreadyConnected = false;
+    }
+
     if (!alreadyConnected) {
       final connected = await PrintBluetoothThermal.connect(
         macPrinterAddress: macAddress,
       );
       if (!connected) {
+        _connectedBluetoothMac = null;
         throw PrinterException(
           'Không thể kết nối máy in Bluetooth ($macAddress)',
         );
       }
+      _connectedBluetoothMac = macAddress;
     }
 
     final written = await PrintBluetoothThermal.writeBytes(bytes);

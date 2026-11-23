@@ -26,6 +26,7 @@ class InvoiceCubit extends Cubit<InvoiceState> {
     required CartState cart,
     required StoreConfig store,
   }) async {
+    if (isClosed || state.status == InvoiceStatus.submitting) return null;
     if (cart.items.isEmpty) {
       _emitError('Giỏ hàng trống, không thể tạo hóa đơn');
       return null;
@@ -74,6 +75,7 @@ class InvoiceCubit extends Cubit<InvoiceState> {
     PrinterConfig config, {
     Future<Uint8List> Function()? capturePng,
   }) async {
+    if (isClosed || state.status == InvoiceStatus.printing) return false;
     final invoice = state.currentInvoice;
     if (invoice == null) {
       _emitError('Chưa có hóa đơn để in');
@@ -124,7 +126,8 @@ class InvoiceCubit extends Cubit<InvoiceState> {
   }
 
   /// Convenience wrapper to print the current invoice via Android/system PDF dialog.
-  Future<bool> printPdfCurrentInvoice() {
+  Future<bool> printPdfCurrentInvoice() async {
+    if (isClosed || state.status == InvoiceStatus.printing) return false;
     return printCurrentInvoice(
       const PrinterConfig(mode: PrinterMode.pdfSystem),
     );
@@ -132,6 +135,7 @@ class InvoiceCubit extends Cubit<InvoiceState> {
 
   /// Loads recent invoices from `GET /api/orders`.
   Future<void> loadHistory({int limit = 20}) async {
+    if (isClosed || state.isLoadingHistory) return;
     emit(state.copyWith(isLoadingHistory: true, clearError: true));
     try {
       final orders = await _repository.fetchOrders(limit: limit);

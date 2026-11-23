@@ -106,8 +106,9 @@ class SettingsLocalDataSource {
         : defaults.printer.lanPort;
 
     final rawPaper = printerJson['paperWidthMm'];
+    final parsedPaper = rawPaper is num ? rawPaper.toInt() : null;
     final paperWidthMm =
-        rawPaper == 58 || rawPaper == 80 ? rawPaper as int : 80;
+        parsedPaper == 58 || parsedPaper == 80 ? parsedPaper! : 80;
 
     return AppSettings(
       serverUrl: _nonEmptyOr(json['serverUrl'], defaults.serverUrl),

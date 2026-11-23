@@ -65,7 +65,21 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> {
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<InvoiceCubit, InvoiceState>(
+    return BlocConsumer<InvoiceCubit, InvoiceState>(
+      listenWhen: (previous, current) =>
+          previous.errorNonce != current.errorNonce &&
+          current.errorMessage != null &&
+          current.errorMessage!.isNotEmpty,
+      listener: (context, state) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(state.errorMessage!),
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+          );
+      },
       builder: (context, state) {
         return Scaffold(
           appBar: AppBar(

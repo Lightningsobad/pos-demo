@@ -315,5 +315,136 @@ void main() {
         );
       },
     );
+
+    testWidgets(
+      'renders CartItemCard without RenderFlex overflow at 320px width and long unit label',
+      (tester) async {
+        tester.view.physicalSize = const Size(320, 640);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final cubit = createCubit();
+        addTearDown(cubit.close);
+
+        await cubit.addProduct(
+          const Product(
+            id: 99,
+            sku: 'SKU-LONG',
+            name: 'Sản phẩm hộp lớn siêu dài',
+            unit: 'Thùng 24 lon lớn',
+            price: 185000,
+            vatRate: 10,
+          ),
+        );
+        await cubit.updateItem(99, discountPercent: 12.5);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: BlocProvider<CartCubit>.value(
+              value: cubit,
+              child: const CartPage(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('CK 12.5%'), findsOneWidget);
+        expect(find.text('VAT 10%'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'disables item cards, +/- buttons, clear cart, staff dropdown, discount field, and payment chips when isSubmitting is true',
+      (tester) async {
+        final cubit = createCubit();
+        addTearDown(cubit.close);
+        await cubit.addProduct(sampleProductA);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: BlocProvider<CartCubit>.value(
+              value: cubit,
+              child: const CartPage(isSubmitting: true),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        // Tapping +/- and card must not alter quantity or open edit sheet.
+        await tester.tap(find.byIcon(Icons.add_circle_outline));
+        await tester.tap(find.byIcon(Icons.remove_circle_outline));
+        await tester.tap(find.text('Cà phê sữa đá'));
+        await tester.tap(find.text('Xóa giỏ'));
+        await tester.tap(find.text('Chuyển khoản'));
+        await tester.pump();
+
+        expect(find.byType(CartItemEditSheet), findsNothing);
+        expect(cubit.state.items, hasLength(1));
+        expect(cubit.state.items.first.quantity, 1);
+        expect(cubit.state.paymentMethod, 'Tiền mặt');
+
+        final discountField = tester.widget<TextField>(
+          find.byKey(const Key('cart_order_discount_field')),
+        );
+        expect(discountField.enabled, isFalse);
+
+        final staffDropdown = tester.widget<DropdownButtonFormField<String>>(
+          find.byType(DropdownButtonFormField<String>),
+        );
+        expect(staffDropdown.onChanged, isNull);
+      },
+    );
+
+    testWidgets(
+      'clearing order discount while focused keeps field empty until typing "10" and syncs "0" on blur',
+      (tester) async {
+        final cubit = createCubit();
+        addTearDown(cubit.close);
+        await cubit.addProduct(sampleProductA);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: BlocProvider<CartCubit>.value(
+              value: cubit,
+              child: const CartPage(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final fieldFinder = find.byKey(const Key('cart_order_discount_field'));
+        await tester.tap(fieldFinder);
+        await tester.pump();
+
+        // Clear to empty while focused -> controller must stay empty, not revert to "0".
+        await tester.enterText(fieldFinder, '');
+        await tester.pump();
+        expect(
+          tester.widget<TextField>(fieldFinder).controller!.text,
+          '',
+        );
+
+        // Typing "10" produces "10", not "010".
+        await tester.enterText(fieldFinder, '10');
+        await tester.pump();
+        expect(
+          tester.widget<TextField>(fieldFinder).controller!.text,
+          '10',
+        );
+        expect(cubit.state.orderDiscountPercent, 10);
+
+        // Clearing again then blurring restores "0".
+        await tester.enterText(fieldFinder, '');
+        await tester.pump();
+        FocusManager.instance.primaryFocus?.unfocus();
+        await tester.pump();
+        expect(
+          tester.widget<TextField>(fieldFinder).controller!.text,
+          '0',
+        );
+      },
+    );
   });
 }

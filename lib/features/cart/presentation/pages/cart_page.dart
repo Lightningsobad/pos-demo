@@ -24,6 +24,7 @@ class CartPage extends StatefulWidget {
 
 class _CartPageState extends State<CartPage> {
   late final TextEditingController _orderDiscountController;
+  late final FocusNode _orderDiscountFocusNode;
 
   @override
   void initState() {
@@ -31,10 +32,15 @@ class _CartPageState extends State<CartPage> {
     final initialDiscount = context.read<CartCubit>().state.orderDiscountPercent;
     _orderDiscountController =
         TextEditingController(text: _formatNumber(initialDiscount));
+    _orderDiscountFocusNode = FocusNode()
+      ..addListener(_onOrderDiscountFocusChanged);
   }
 
   @override
   void dispose() {
+    _orderDiscountFocusNode
+      ..removeListener(_onOrderDiscountFocusChanged)
+      ..dispose();
     _orderDiscountController.dispose();
     super.dispose();
   }
@@ -45,10 +51,24 @@ class _CartPageState extends State<CartPage> {
         : value.toString();
   }
 
-  void _syncOrderDiscountField(double percent) {
-    final currentParsed = double.tryParse(
-      _orderDiscountController.text.trim().replaceAll(',', '.'),
-    );
+  void _onOrderDiscountFocusChanged() {
+    if (!_orderDiscountFocusNode.hasFocus) {
+      _syncOrderDiscountField(
+        context.read<CartCubit>().state.orderDiscountPercent,
+        forceIfEmpty: true,
+      );
+    }
+  }
+
+  void _syncOrderDiscountField(double percent, {bool forceIfEmpty = false}) {
+    final text = _orderDiscountController.text.trim();
+    if (!forceIfEmpty &&
+        _orderDiscountFocusNode.hasFocus &&
+        text.isEmpty &&
+        percent == 0) {
+      return;
+    }
+    final currentParsed = double.tryParse(text.replaceAll(',', '.'));
     if (currentParsed == percent) return;
     _orderDiscountController.text = _formatNumber(percent);
   }
@@ -96,9 +116,13 @@ class _CartPageState extends State<CartPage> {
     return BlocConsumer<CartCubit, CartState>(
       listenWhen: (previous, current) =>
           previous.errorNonce != current.errorNonce ||
-          previous.orderDiscountPercent != current.orderDiscountPercent,
+          previous.orderDiscountPercent != current.orderDiscountPercent ||
+          previous.isEmpty != current.isEmpty,
       listener: (context, state) {
-        _syncOrderDiscountField(state.orderDiscountPercent);
+        _syncOrderDiscountField(
+          state.orderDiscountPercent,
+          forceIfEmpty: state.isEmpty,
+        );
         if (state.errorMessage != null && state.errorMessage!.isNotEmpty) {
           ScaffoldMessenger.of(context)
             ..hideCurrentSnackBar()
@@ -136,6 +160,7 @@ class _CartPageState extends State<CartPage> {
                           ...state.items.map(
                             (item) => _CartItemCard(
                               item: item,
+                              enabled: !widget.isSubmitting,
                               onTap: () => _openEditSheet(item),
                               onDecrement: () {
                                 if (item.quantity <= 1) {
@@ -160,7 +185,9 @@ class _CartPageState extends State<CartPage> {
                           const SizedBox(height: 8),
                           _OrderOptionsCard(
                             state: state,
+                            enabled: !widget.isSubmitting,
                             orderDiscountController: _orderDiscountController,
+                            orderDiscountFocusNode: _orderDiscountFocusNode,
                             onOrderDiscountChanged: _onOrderDiscountChanged,
                           ),
                         ],
@@ -223,12 +250,14 @@ class _EmptyCartView extends StatelessWidget {
 class _CartItemCard extends StatelessWidget {
   const _CartItemCard({
     required this.item,
+    required this.enabled,
     required this.onTap,
     required this.onDecrement,
     required this.onIncrement,
   });
 
   final CartItem item;
+  final bool enabled;
   final VoidCallback onTap;
   final VoidCallback onDecrement;
   final VoidCallback onIncrement;
@@ -245,7 +274,7 @@ class _CartItemCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 8),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
+        onTap: enabled ? onTap : null,
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(
@@ -286,41 +315,47 @@ class _CartItemCard extends StatelessWidget {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 4,
-                    children: [
-                      if (item.discountPercent > 0)
+                  Expanded(
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        if (item.discountPercent > 0)
+                          _MetaTag(
+                            label: 'CK ${_formatRate(item.discountPercent)}%',
+                            color: theme.colorScheme.errorContainer,
+                            textColor: theme.colorScheme.onErrorContainer,
+                          ),
                         _MetaTag(
-                          label: 'CK ${_formatRate(item.discountPercent)}%',
-                          color: theme.colorScheme.errorContainer,
-                          textColor: theme.colorScheme.onErrorContainer,
+                          label: 'VAT ${_formatRate(item.vatRate)}%',
+                          color: theme.colorScheme.secondaryContainer,
+                          textColor: theme.colorScheme.onSecondaryContainer,
                         ),
-                      _MetaTag(
-                        label: 'VAT ${_formatRate(item.vatRate)}%',
-                        color: theme.colorScheme.secondaryContainer,
-                        textColor: theme.colorScheme.onSecondaryContainer,
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                  const Spacer(),
                   IconButton(
                     visualDensity: VisualDensity.compact,
-                    onPressed: onDecrement,
+                    onPressed: enabled ? onDecrement : null,
                     icon: const Icon(Icons.remove_circle_outline),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    child: Text(
-                      '$qtyText ${item.unit}',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 110),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: Text(
+                        '$qtyText ${item.unit}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
                   IconButton(
                     visualDensity: VisualDensity.compact,
-                    onPressed: onIncrement,
+                    onPressed: enabled ? onIncrement : null,
                     icon: const Icon(Icons.add_circle_outline),
                   ),
                 ],
@@ -382,12 +417,16 @@ class _MetaTag extends StatelessWidget {
 class _OrderOptionsCard extends StatelessWidget {
   const _OrderOptionsCard({
     required this.state,
+    required this.enabled,
     required this.orderDiscountController,
+    required this.orderDiscountFocusNode,
     required this.onOrderDiscountChanged,
   });
 
   final CartState state;
+  final bool enabled;
   final TextEditingController orderDiscountController;
+  final FocusNode orderDiscountFocusNode;
   final ValueChanged<String> onOrderDiscountChanged;
 
   @override
@@ -416,7 +455,7 @@ class _OrderOptionsCard extends StatelessWidget {
                 Expanded(
                   flex: 3,
                   child: DropdownButtonFormField<String>(
-                    key: const Key('cart_staff_dropdown'),
+                    key: ValueKey('cart_staff_${state.staffName}'),
                     initialValue: state.staffName,
                     isExpanded: true,
                     decoration: const InputDecoration(
@@ -435,11 +474,13 @@ class _OrderOptionsCard extends StatelessWidget {
                           ),
                         )
                         .toList(growable: false),
-                    onChanged: (value) {
-                      if (value != null) {
-                        context.read<CartCubit>().setStaffName(value);
-                      }
-                    },
+                    onChanged: enabled
+                        ? (value) {
+                            if (value != null) {
+                              context.read<CartCubit>().setStaffName(value);
+                            }
+                          }
+                        : null,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -448,6 +489,8 @@ class _OrderOptionsCard extends StatelessWidget {
                   child: TextField(
                     key: const Key('cart_order_discount_field'),
                     controller: orderDiscountController,
+                    focusNode: orderDiscountFocusNode,
+                    enabled: enabled,
                     keyboardType:
                         const TextInputType.numberWithOptions(decimal: true),
                     decoration: const InputDecoration(
@@ -478,8 +521,10 @@ class _OrderOptionsCard extends StatelessWidget {
                     (method) => ChoiceChip(
                       label: Text(method),
                       selected: state.paymentMethod == method,
-                      onSelected: (_) =>
-                          context.read<CartCubit>().setPaymentMethod(method),
+                      onSelected: enabled
+                          ? (_) =>
+                              context.read<CartCubit>().setPaymentMethod(method)
+                          : null,
                     ),
                   )
                   .toList(growable: false),
@@ -580,9 +625,16 @@ class _SummaryRow extends StatelessWidget {
         : theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600);
 
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: labelStyle),
+        Expanded(
+          child: Text(
+            label,
+            style: labelStyle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 8),
         Text(value, style: valueStyle),
       ],
     );

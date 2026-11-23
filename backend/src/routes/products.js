@@ -20,14 +20,14 @@ function parsePagination(query = {}) {
   return { page, limit, offset: (page - 1) * limit, q };
 }
 
-function waitStockDelay(delayMs, request, reply) {
+function waitStockDelay(delayMs, _request, reply) {
   if (delayMs <= 0) {
     return Promise.resolve(true);
   }
   return new Promise((resolvePromise) => {
     let settled = false;
     const cleanup = () => {
-      request.raw.off('close', onClose);
+      reply.raw.off('close', onClose);
     };
 
     const timer = setTimeout(() => {
@@ -38,14 +38,14 @@ function waitStockDelay(delayMs, request, reply) {
     }, delayMs);
 
     const onClose = () => {
-      if (settled || reply.raw.writableEnded) return;
+      if (settled || reply.raw.writableFinished) return;
       settled = true;
       clearTimeout(timer);
       cleanup();
       resolvePromise(false);
     };
 
-    request.raw.on('close', onClose);
+    reply.raw.on('close', onClose);
   });
 }
 

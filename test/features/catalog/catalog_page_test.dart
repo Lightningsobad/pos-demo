@@ -223,5 +223,58 @@ void main() {
         verify(() => cubit.loadInitial(query: '')).called(1);
       },
     );
+
+    testWidgets(
+      'reports initial viewport post-frame on tall viewport without manual scroll',
+      (tester) async {
+        tester.view.physicalSize = const Size(500, 1600);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final products = _makeProducts(10);
+        await tester.pumpWidget(
+          buildSubject(
+            state: CatalogState(
+              products: products,
+              hasMore: true,
+            ),
+          ),
+        );
+        await tester.pump();
+
+        verify(
+          () => cubit.onScrollPositionChanged(
+            firstVisibleIndex: 0,
+            lastVisibleIndex: 9,
+          ),
+        ).called(1);
+      },
+    );
+
+    testWidgets(
+      'shows non-blocking bottom retry bar when pagination fails with existing products',
+      (tester) async {
+        when(() => cubit.loadNextPage()).thenAnswer((_) async {});
+
+        final products = _makeProducts(4);
+        await tester.pumpWidget(
+          buildSubject(
+            state: CatalogState(
+              products: products,
+              hasMore: true,
+              errorMessage: 'Pagination failed',
+            ),
+          ),
+        );
+
+        expect(find.text('Sản phẩm 1'), findsOneWidget);
+        expect(find.text('Không thể tải thêm sản phẩm'), findsOneWidget);
+
+        await tester.tap(find.text('Thử lại'));
+        await tester.pump();
+        verify(() => cubit.loadNextPage()).called(1);
+      },
+    );
   });
 }

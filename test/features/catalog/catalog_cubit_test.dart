@@ -920,5 +920,56 @@ void main() {
         expect(cubit.state.products, newItems);
       },
     );
+
+    test(
+      'loadNextPage returns early without throwing StateError after cubit is closed',
+      () async {
+        when(
+          () => repository.fetchProducts(
+            page: 1,
+            limit: any(named: 'limit'),
+            query: any(named: 'query'),
+            cancelToken: any(named: 'cancelToken'),
+          ),
+        ).thenAnswer(
+          (_) async => CatalogPageResult(
+            items: _makePageProducts(1),
+            page: 1,
+            limit: 10,
+            total: 30,
+            hasMore: true,
+          ),
+        );
+        when(
+          () => repository.fetchProductStock(
+            any(),
+            cancelToken: any(named: 'cancelToken'),
+          ),
+        ).thenAnswer((_) async => 5);
+        when(
+          () => repository.fetchProductMedia(
+            any(),
+            cancelToken: any(named: 'cancelToken'),
+          ),
+        ).thenAnswer(
+          (invocation) async =>
+              _makeMedia(invocation.positionalArguments.first as int),
+        );
+
+        final cubit = CatalogCubit(repository);
+        await cubit.loadInitial();
+        await cubit.close();
+
+        await expectLater(cubit.loadNextPage(), completes);
+        verifyNever(
+          () => repository.fetchProducts(
+            page: 2,
+            limit: any(named: 'limit'),
+            query: any(named: 'query'),
+            cancelToken: any(named: 'cancelToken'),
+          ),
+        );
+      },
+    );
   });
 }

@@ -23,17 +23,25 @@ class CartCubit extends Cubit<CartState> {
   static const List<String> paymentMethods = CartDraft.paymentMethods;
 
   final CartRepository _repository;
+  bool _hasCustomStaff = false;
 
   /// Loads any locally persisted draft cart and recalculates [CartSummary].
-  Future<void> loadDraftCart() async {
+  Future<void> loadDraftCart({String? fallbackStaffName}) async {
     emit(state.copyWith(status: CartStatus.loading, clearError: true));
     try {
       final draft = await _repository.loadDraft();
       if (isClosed) return;
 
-      final resolvedStaff = draft.staffName.trim().isNotEmpty
-          ? draft.staffName.trim()
-          : state.staffName;
+      final draftStaff = draft.staffName.trim();
+      final fallback = (fallbackStaffName ?? '').trim();
+      final String resolvedStaff;
+      if (draftStaff.isNotEmpty) {
+        resolvedStaff = draftStaff;
+        _hasCustomStaff = true;
+      } else {
+        resolvedStaff = fallback.isNotEmpty ? fallback : state.staffName;
+        _hasCustomStaff = false;
+      }
       final summary = CartSummary.fromItems(
         draft.items,
         orderDiscountPercent: draft.orderDiscountPercent,
@@ -147,6 +155,24 @@ class CartCubit extends Cubit<CartState> {
     await _persistDraft(nextState);
   }
 
+  /// Applies [staffName] from settings when no custom staff was chosen (or [force] is true).
+  Future<void> applyDefaultStaff(String staffName, {bool force = false}) async {
+    final trimmed = staffName.trim();
+    if (isClosed || trimmed.isEmpty) return;
+    if (!force && _hasCustomStaff) return;
+    if (state.staffName == trimmed) return;
+
+    final nextState = state.copyWith(
+      status: CartStatus.ready,
+      staffName: trimmed,
+      clearError: true,
+    );
+    emit(nextState);
+    if (nextState.items.isNotEmpty) {
+      await _persistDraft(nextState);
+    }
+  }
+
   /// Updates the active cashier/staff name.
   Future<void> setStaffName(String staffName) async {
     final trimmed = staffName.trim();
@@ -155,6 +181,7 @@ class CartCubit extends Cubit<CartState> {
       return;
     }
 
+    _hasCustomStaff = true;
     final nextState = state.copyWith(
       status: CartStatus.ready,
       staffName: trimmed,
@@ -182,6 +209,7 @@ class CartCubit extends Cubit<CartState> {
 
   /// Clears all items and order discount while preserving cashier/payment defaults.
   Future<void> clearCart() async {
+    _hasCustomStaff = false;
     emit(
       state.copyWith(
         status: CartStatus.ready,

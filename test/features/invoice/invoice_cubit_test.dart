@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -249,6 +250,58 @@ void main() {
       expect(cubit.state.currentInvoice, equals(sampleInvoice));
       expect(cubit.state.status, InvoiceStatus.ready);
     });
+
+    test(
+      'ignores duplicate concurrent calls to submitOrderAndOpenPreview, printCurrentInvoice, printPdfCurrentInvoice, and loadHistory',
+      () async {
+        final orderCompleter = Completer<Invoice>();
+        when(() => mockRepo.createOrder(any()))
+            .thenAnswer((_) => orderCompleter.future);
+
+        final firstSubmit = cubit.submitOrderAndOpenPreview(
+          cart: sampleCartState,
+          store: sampleStore,
+        );
+        final secondSubmit = cubit.submitOrderAndOpenPreview(
+          cart: sampleCartState,
+          store: sampleStore,
+        );
+        expect(await secondSubmit, isNull);
+
+        orderCompleter.complete(sampleInvoice);
+        expect(await firstSubmit, equals(sampleInvoice));
+        verify(() => mockRepo.createOrder(any())).called(1);
+
+        final printCompleter = Completer<void>();
+        when(() => mockPrinter.printPdf(invoice: any(named: 'invoice')))
+            .thenAnswer((_) => printCompleter.future);
+
+        final firstPrint = cubit.printPdfCurrentInvoice();
+        final secondPrint = cubit.printPdfCurrentInvoice();
+        final thirdPrint = cubit.printCurrentInvoice(
+          const PrinterConfig(mode: PrinterMode.pdfSystem),
+        );
+        expect(await secondPrint, isFalse);
+        expect(await thirdPrint, isFalse);
+
+        printCompleter.complete();
+        expect(await firstPrint, isTrue);
+        verify(() => mockPrinter.printPdf(invoice: any(named: 'invoice')))
+            .called(1);
+
+        final historyCompleter = Completer<List<Invoice>>();
+        when(() => mockRepo.fetchOrders(limit: 20))
+            .thenAnswer((_) => historyCompleter.future);
+
+        final firstHistory = cubit.loadHistory();
+        final secondHistory = cubit.loadHistory();
+        await secondHistory;
+
+        historyCompleter.complete([sampleInvoice]);
+        await firstHistory;
+        verify(() => mockRepo.fetchOrders(limit: 20)).called(1);
+      },
+    );
   });
 
   group('InvoiceRemoteDatasource & InvoiceRepositoryImpl', () {
@@ -526,6 +579,48 @@ void main() {
 
         expect(find.text('Hóa đơn HD-20261123-0042'), findsOneWidget);
         expect(find.text('In máy in nhiệt'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'InvoiceHistoryPage surfaces SnackBar on refresh failure even when history is non-empty',
+      (tester) async {
+        final mockRepo = _MockInvoiceRepository();
+        final mockPrinter = _MockPrinterService();
+        final cubit = InvoiceCubit(
+          repository: mockRepo,
+          printerService: mockPrinter,
+        );
+        addTearDown(cubit.close);
+
+        when(() => mockRepo.fetchOrders(limit: 20))
+            .thenAnswer((_) async => [sampleInvoice]);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: BlocProvider<InvoiceCubit>.value(
+              value: cubit,
+              child: const InvoiceHistoryPage(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('HD-20261123-0042'), findsOneWidget);
+
+        when(() => mockRepo.fetchOrders(limit: 20))
+            .thenThrow(const SocketException('Refresh offline'));
+
+        await tester.tap(find.byTooltip('Tải lại'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(find.text('HD-20261123-0042'), findsOneWidget);
+        expect(find.byType(SnackBar), findsOneWidget);
+        expect(
+          find.textContaining('Không thể tải lịch sử hóa đơn'),
+          findsOneWidget,
+        );
       },
     );
   });

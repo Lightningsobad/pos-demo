@@ -109,12 +109,15 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isSaving = context.select<SettingsCubit, bool>(
+      (cubit) => cubit.state.status == SettingsStatus.saving,
+    );
     return Scaffold(
       appBar: AppBar(
         title: const Text('Cấu hình POS'),
         actions: [
           TextButton.icon(
-            onPressed: _submit,
+            onPressed: isSaving ? null : _submit,
             icon: const Icon(Icons.save_outlined),
             label: const Text('Lưu'),
           ),

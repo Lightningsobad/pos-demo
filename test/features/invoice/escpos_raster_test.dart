@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:demo_application/features/invoice/data/services/escpos_raster_printer_service.dart';
+import 'package:demo_application/features/invoice/data/services/pdf_invoice_service.dart';
 import 'package:demo_application/features/invoice/domain/entities/invoice.dart';
 import 'package:demo_application/features/invoice/domain/services/printer_service.dart';
 import 'package:demo_application/features/settings/domain/entities/app_settings.dart';
@@ -188,5 +189,88 @@ void main() {
         throwsA(isA<PrinterException>()),
       );
     });
+  });
+
+  group('PdfInvoiceService offline fonts & store logo', () {
+    final sampleInvoiceWithLogo = Invoice(
+      id: 7,
+      orderCode: 'HD-20261123-0007',
+      staffName: 'Nguyễn Văn An',
+      paymentMethod: 'Tiền mặt',
+      subtotal: 45000,
+      discountPercent: 0,
+      discountAmount: 0,
+      totalPayable: 45000,
+      store: const InvoiceStore(
+        name: 'Cửa hàng Demo POS',
+        phone: '0901 234 567',
+        address: '123 Nguyễn Huệ, TP.HCM',
+        logoUrl: 'https://example.com/logo.png',
+      ),
+      createdAt: DateTime.utc(2026, 11, 23, 8, 30),
+      items: const [
+        InvoiceItem(
+          productId: 1,
+          sku: 'CF-01',
+          name: 'Cà phê sữa đá',
+          unit: 'Ly',
+          quantity: 1,
+          unitPrice: 45000,
+          discountPercent: 0,
+          discountAmount: 0,
+          vatRate: 8,
+          vatAmount: 3333,
+          lineTotal: 45000,
+          note: 'Ít đá',
+        ),
+      ],
+    );
+
+    test(
+      'loads bundled Roboto fonts offline and embeds valid store logo PNG',
+      () async {
+        TestWidgetsFlutterBinding.ensureInitialized();
+
+        final logoImage = img.Image(width: 24, height: 24, numChannels: 4);
+        img.fill(logoImage, color: img.ColorRgba8(238, 77, 45, 255));
+        final logoPng = Uint8List.fromList(img.encodePng(logoImage));
+
+        String? requestedUrl;
+        final service = PdfInvoiceService(
+          fetchLogoBytes: (url) async {
+            requestedUrl = url;
+            return logoPng;
+          },
+        );
+
+        final pdfBytes = await service.buildInvoicePdf(sampleInvoiceWithLogo);
+
+        expect(requestedUrl, 'https://example.com/logo.png');
+        expect(pdfBytes.length, greaterThan(1000));
+        expect(String.fromCharCodes(pdfBytes.sublist(0, 4)), '%PDF');
+      },
+    );
+
+    test(
+      'falls back cleanly to monogram badge when logo fetch throws or returns invalid bytes',
+      () async {
+        TestWidgetsFlutterBinding.ensureInitialized();
+
+        final throwingService = PdfInvoiceService(
+          fetchLogoBytes: (_) async => throw Exception('offline'),
+        );
+        final invalidBytesService = PdfInvoiceService(
+          fetchLogoBytes: (_) async => Uint8List.fromList([1, 2, 3, 4]),
+        );
+
+        final pdfFromThrow =
+            await throwingService.buildInvoicePdf(sampleInvoiceWithLogo);
+        final pdfFromInvalid =
+            await invalidBytesService.buildInvoicePdf(sampleInvoiceWithLogo);
+
+        expect(String.fromCharCodes(pdfFromThrow.sublist(0, 4)), '%PDF');
+        expect(String.fromCharCodes(pdfFromInvalid.sublist(0, 4)), '%PDF');
+      },
+    );
   });
 }

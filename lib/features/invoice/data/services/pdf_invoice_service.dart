@@ -2,6 +2,9 @@ import 'dart:typed_data';
 
 import 'package:demo_application/core/utils/currency_formatter.dart';
 import 'package:demo_application/features/invoice/domain/entities/invoice.dart';
+import 'package:dio/dio.dart';
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:image/image.dart' as img;
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -12,23 +15,79 @@ typedef PdfLayoutCallback = Future<bool> Function({
   required String name,
 });
 
+typedef LogoBytesFetcher = Future<Uint8List?> Function(String url);
+
 /// Generates Vietnamese POS invoices in PDF format and opens the Android/system print dialog.
 class PdfInvoiceService {
   PdfInvoiceService({
     Future<pw.Font> Function()? loadRegularFont,
     Future<pw.Font> Function()? loadBoldFont,
     PdfLayoutCallback? layoutPdfCallback,
-  })  : _loadRegularFont = loadRegularFont ?? PdfGoogleFonts.notoSansRegular,
-        _loadBoldFont = loadBoldFont ?? PdfGoogleFonts.notoSansBold,
-        _layoutPdfCallback = layoutPdfCallback ?? _defaultLayoutPdf;
+    LogoBytesFetcher? fetchLogoBytes,
+  })  : _loadRegularFont = loadRegularFont ?? _defaultRegularFont,
+        _loadBoldFont = loadBoldFont ?? _defaultBoldFont,
+        _layoutPdfCallback = layoutPdfCallback ?? _defaultLayoutPdf,
+        _fetchLogoBytes = fetchLogoBytes ?? _defaultFetchLogoBytes;
 
   static const PdfPageFormat defaultPageFormat = PdfPageFormat.a4;
+  static const String _regularFontAsset = 'assets/fonts/Roboto-Regular.ttf';
+  static const String _boldFontAsset = 'assets/fonts/Roboto-Bold.ttf';
   static final DateFormat _dateFormat = DateFormat('dd/MM/yyyy');
   static final DateFormat _timeFormat = DateFormat('HH:mm:ss');
 
   final Future<pw.Font> Function() _loadRegularFont;
   final Future<pw.Font> Function() _loadBoldFont;
   final PdfLayoutCallback _layoutPdfCallback;
+  final LogoBytesFetcher _fetchLogoBytes;
+
+  static Future<pw.Font> _defaultRegularFont() => _loadBundledFont(
+        _regularFontAsset,
+        PdfGoogleFonts.notoSansRegular,
+      );
+
+  static Future<pw.Font> _defaultBoldFont() => _loadBundledFont(
+        _boldFontAsset,
+        PdfGoogleFonts.notoSansBold,
+      );
+
+  static Future<pw.Font> _loadBundledFont(
+    String assetPath,
+    Future<pw.Font> Function() fallback,
+  ) async {
+    try {
+      final data = await rootBundle.load(assetPath);
+      return pw.Font.ttf(data);
+    } catch (_) {
+      return fallback();
+    }
+  }
+
+  static Future<Uint8List?> _defaultFetchLogoBytes(String url) async {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return null;
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
+      return null;
+    }
+
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 2),
+        receiveTimeout: const Duration(seconds: 2),
+        responseType: ResponseType.bytes,
+      ),
+    );
+    try {
+      final response = await dio.get<List<int>>(trimmed);
+      final data = response.data;
+      if (data == null || data.isEmpty) return null;
+      return Uint8List.fromList(data);
+    } catch (_) {
+      return null;
+    } finally {
+      dio.close();
+    }
+  }
 
   static Future<bool> _defaultLayoutPdf({
     required Future<Uint8List> Function(PdfPageFormat format) onLayout,
@@ -66,6 +125,7 @@ class PdfInvoiceService {
   }) async {
     final regular = regularFont ?? await _loadRegularFont();
     final bold = boldFont ?? await _loadBoldFont();
+    final logoImage = await _resolveLogoImage(invoice.store.logoUrl);
     final localCreatedAt = invoice.createdAt.toLocal();
 
     final doc = pw.Document(
@@ -80,7 +140,7 @@ class PdfInvoiceService {
         pageFormat: format,
         margin: const pw.EdgeInsets.all(24),
         build: (context) => [
-          _buildHeader(invoice),
+          _buildHeader(invoice, logoImage: logoImage),
           pw.SizedBox(height: 12),
           pw.Divider(thickness: 1),
           pw.SizedBox(height: 8),
@@ -103,7 +163,21 @@ class PdfInvoiceService {
     return doc.save();
   }
 
-  pw.Widget _buildHeader(Invoice invoice) {
+  Future<pw.ImageProvider?> _resolveLogoImage(String? logoUrl) async {
+    final trimmed = logoUrl?.trim() ?? '';
+    if (trimmed.isEmpty) return null;
+    try {
+      final bytes = await _fetchLogoBytes(trimmed);
+      if (bytes == null || bytes.isEmpty || img.decodeImage(bytes) == null) {
+        return null;
+      }
+      return pw.MemoryImage(bytes);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  pw.Widget _buildHeader(Invoice invoice, {pw.ImageProvider? logoImage}) {
     final store = invoice.store;
     final trimmedName = store.name.trim();
     final monogram = trimmedName.isNotEmpty
@@ -120,19 +194,33 @@ class PdfInvoiceService {
           decoration: pw.BoxDecoration(
             border: pw.Border.all(width: 1.5, color: PdfColors.grey700),
             borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
-            color: PdfColors.grey200,
+            color: logoImage != null ? PdfColors.white : PdfColors.grey200,
           ),
-          child: pw.Column(
-            mainAxisAlignment: pw.MainAxisAlignment.center,
-            children: [
-              pw.Text(
-                monogram,
-                style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 18),
-              ),
-              if (store.logoUrl != null && store.logoUrl!.isNotEmpty)
-                pw.Text('LOGO', style: const pw.TextStyle(fontSize: 6)),
-            ],
-          ),
+          child: logoImage != null
+              ? pw.ClipRRect(
+                  horizontalRadius: 6,
+                  verticalRadius: 6,
+                  child: pw.Image(
+                    logoImage,
+                    width: 48,
+                    height: 48,
+                    fit: pw.BoxFit.cover,
+                  ),
+                )
+              : pw.Column(
+                  mainAxisAlignment: pw.MainAxisAlignment.center,
+                  children: [
+                    pw.Text(
+                      monogram,
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 18,
+                      ),
+                    ),
+                    if (store.logoUrl != null && store.logoUrl!.isNotEmpty)
+                      pw.Text('LOGO', style: const pw.TextStyle(fontSize: 6)),
+                  ],
+                ),
         ),
         pw.SizedBox(width: 12),
         pw.Expanded(

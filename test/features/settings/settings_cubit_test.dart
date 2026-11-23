@@ -1,9 +1,13 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:bloc_test/bloc_test.dart';
 import 'package:demo_application/core/config/app_config.dart';
 import 'package:demo_application/core/network/dio_client.dart';
 import 'package:demo_application/features/settings/data/datasources/settings_local_datasource.dart';
 import 'package:demo_application/features/settings/data/repositories/settings_repository_impl.dart';
 import 'package:demo_application/features/settings/domain/entities/app_settings.dart';
+import 'package:demo_application/features/settings/domain/repositories/settings_repository.dart';
 import 'package:demo_application/features/settings/presentation/cubit/settings_cubit.dart';
 import 'package:demo_application/features/settings/presentation/cubit/settings_state.dart';
 import 'package:demo_application/features/settings/presentation/pages/settings_page.dart';
@@ -313,5 +317,64 @@ void main() {
       );
       expect(find.text('Cửa hàng Chưa Lưu'), findsOneWidget);
     });
+
+    test('SettingsLocalDataSource parses paperWidthMm when stored as num/double', () async {
+      await prefs.setString(
+        'pos_app_settings_v1',
+        jsonEncode({
+          'printer': {'paperWidthMm': 58.0},
+        }),
+      );
+      final dataSource = SettingsLocalDataSource(prefs: prefs);
+      final loaded = await dataSource.loadSettings();
+      expect(loaded.printer.paperWidthMm, 58);
+    });
+
+    testWidgets('SettingsPage disables AppBar Lưu button while saving', (tester) async {
+      final saveCompleter = Completer<void>();
+      final repo = _DelayedSaveSettingsRepository(saveCompleter);
+      final cubit = SettingsCubit(repository: repo, dioClient: mockDioClient);
+      addTearDown(cubit.close);
+      await cubit.loadSettings();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: BlocProvider<SettingsCubit>.value(
+            value: cubit,
+            child: const SettingsPage(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Lưu'));
+      await tester.pump();
+
+      final saveAction = tester.widget<TextButton>(
+        find.ancestor(
+          of: find.text('Lưu'),
+          matching: find.byType(TextButton),
+        ),
+      );
+      expect(saveAction.onPressed, isNull);
+
+      saveCompleter.complete();
+      await tester.pumpAndSettle();
+    });
   });
+}
+
+class _DelayedSaveSettingsRepository implements SettingsRepository {
+  _DelayedSaveSettingsRepository(this._saveCompleter);
+
+  final Completer<void> _saveCompleter;
+
+  @override
+  Future<AppSettings> loadSettings() async => const AppSettings();
+
+  @override
+  Future<void> saveSettings(AppSettings settings) => _saveCompleter.future;
+
+  @override
+  Future<List<BluetoothPrinterDevice>> scanBluetoothDevices() async => const [];
 }

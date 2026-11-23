@@ -1,13 +1,18 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { openDatabase } from '../src/db/database.js';
 import { ensureSampleMedia, seedProducts } from '../src/db/seed.js';
 
 const MAX_MEDIA_BYTES = 5 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const SAMPLE_VIDEO_ASSET = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../assets/sample_promo.mp4',
+);
 
 describe('Media & Product Seeder', () => {
   test('ensureSampleMedia tao 4 file PNG hop le va 1 file MP4 hop le deu < 5MB', () => {
@@ -36,18 +41,26 @@ describe('Media & Product Seeder', () => {
       assert.equal(existsSync(result.video), true, `Missing video file: ${result.video}`);
       const videoStats = statSync(result.video);
       assert.ok(
-        videoStats.size > 0 && videoStats.size < MAX_MEDIA_BYTES,
+        videoStats.size > 5000 && videoStats.size < MAX_MEDIA_BYTES,
         `Invalid video size: ${videoStats.size}`,
       );
 
+      const expectedVideoBuf = readFileSync(SAMPLE_VIDEO_ASSET);
       const videoBuf = readFileSync(result.video);
       assert.equal(videoBuf.subarray(4, 8).toString('ascii'), 'ftyp', 'Missing MP4 ftyp box');
       assert.ok(videoBuf.includes(Buffer.from('moov')), 'Missing MP4 moov box');
       assert.ok(videoBuf.includes(Buffer.from('mdat')), 'Missing MP4 mdat box');
+      assert.ok(videoBuf.includes(Buffer.from('avc1')), 'Missing MP4 avc1 codec box');
+      assert.equal(videoBuf.equals(expectedVideoBuf), true, 'sample_promo.mp4 must match asset');
 
       // Calling again should be idempotent and return the same paths
       const secondResult = ensureSampleMedia(mediaDir);
       assert.deepEqual(secondResult, result);
+
+      // An older smaller placeholder must be overwritten with the real asset
+      writeFileSync(result.video, Buffer.alloc(2048, 0));
+      ensureSampleMedia(mediaDir);
+      assert.equal(readFileSync(result.video).equals(expectedVideoBuf), true);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

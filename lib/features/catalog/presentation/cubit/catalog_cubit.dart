@@ -16,7 +16,7 @@ class CatalogCubit extends Cubit<CatalogState> {
     this._repository, {
     int pageSize = AppConfig.catalogPageSize,
     int maxCachedPages = AppConfig.catalogLruMaxPages,
-    Duration scrollDebounceDuration = AppConfig.searchDebounce,
+    Duration scrollDebounceDuration = AppConfig.scrollDebounce,
   })  : assert(pageSize > 0),
         assert(maxCachedPages > 0),
         assert(!scrollDebounceDuration.isNegative),
@@ -116,7 +116,10 @@ class CatalogCubit extends Cubit<CatalogState> {
   /// Appends the next product page (Stream 1), enforces LRU page limit,
   /// and fetches Stream 2 & 3 if the page lies inside the active window.
   Future<void> loadNextPage() async {
-    if (!state.hasMore || state.isLoadingMore || state.isLoadingInitial) {
+    if (isClosed ||
+        !state.hasMore ||
+        state.isLoadingMore ||
+        state.isLoadingInitial) {
       return;
     }
 

@@ -161,10 +161,13 @@ describe('Products 3-Stream API Routes', () => {
       );
       clearTimeout(abortTimer);
 
-      // Normal request still works cleanly
+      // Normal request still works cleanly and waits full delay
+      const start = performance.now();
       const okResp = await fetch(`http://127.0.0.1:${port}/api/products/2/stock`);
+      const elapsed = performance.now() - start;
       assert.equal(okResp.status, 200);
       assert.deepEqual(await okResp.json(), { productId: 2, stock: 10 });
+      assert.ok(elapsed >= 400, `Expected full delay >= 400ms, got ${elapsed}ms`);
     } finally {
       await slowApp.close();
       rmSync(slowDir, { recursive: true, force: true });

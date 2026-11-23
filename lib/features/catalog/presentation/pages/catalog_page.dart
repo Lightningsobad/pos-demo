@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:demo_application/core/config/app_config.dart';
 import 'package:demo_application/features/catalog/domain/entities/product.dart';
 import 'package:demo_application/features/catalog/presentation/cubit/catalog_cubit.dart';
 import 'package:demo_application/features/catalog/presentation/cubit/catalog_state.dart';
@@ -36,7 +37,6 @@ class _CatalogPageState extends State<CatalogPage> {
   static const int _crossAxisCount = 2;
   static const double _gridPadding = 10;
   static const double _gridSpacing = 10;
-  static const Duration _searchDebounceDuration = Duration(milliseconds: 300);
 
   late final TextEditingController _searchController;
   late final ScrollController _scrollController;
@@ -45,6 +45,7 @@ class _CatalogPageState extends State<CatalogPage> {
   int _lastProductCount = 0;
   int _lastReportedFirst = -1;
   int _lastReportedLast = -1;
+  bool _viewportReportScheduled = false;
 
   @override
   void initState() {
@@ -64,7 +65,7 @@ class _CatalogPageState extends State<CatalogPage> {
   void _onSearchChanged(String rawQuery) {
     _searchDebounceTimer?.cancel();
     final trimmed = rawQuery.trim();
-    _searchDebounceTimer = Timer(_searchDebounceDuration, () {
+    _searchDebounceTimer = Timer(AppConfig.searchDebounce, () {
       if (!mounted) return;
       _resetScrollTracking();
       context.read<CatalogCubit>().loadInitial(query: trimmed);
@@ -90,6 +91,16 @@ class _CatalogPageState extends State<CatalogPage> {
     if (_scrollController.hasClients) {
       _scrollController.jumpTo(0);
     }
+  }
+
+  void _scheduleViewportReport(int itemCount) {
+    if (_viewportReportScheduled || itemCount <= 0) return;
+    _viewportReportScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _viewportReportScheduled = false;
+      if (!mounted || !_scrollController.hasClients) return;
+      _reportViewportIfNeeded(_scrollController.position, itemCount);
+    });
   }
 
   void _reportViewportIfNeeded(
@@ -158,67 +169,79 @@ class _CatalogPageState extends State<CatalogPage> {
                 return _buildEmptyState(context);
               }
 
+              if (_lastReportedLast == -1) {
+                _scheduleViewportReport(state.products.length);
+              }
+
               return Column(
                 children: [
                   Expanded(
-                    child: NotificationListener<ScrollNotification>(
-                      onNotification: (notification) {
-                        if (notification is ScrollUpdateNotification ||
-                            notification is ScrollEndNotification) {
-                          _reportViewportIfNeeded(
-                            notification.metrics,
-                            state.products.length,
-                            force: notification is ScrollEndNotification,
-                          );
-                        }
+                    child: NotificationListener<ScrollMetricsNotification>(
+                      onNotification: (_) {
+                        _scheduleViewportReport(state.products.length);
                         return false;
                       },
-                      child: RefreshIndicator(
-                        onRefresh: () async {
-                          _resetScrollTracking();
-                          await context
-                              .read<CatalogCubit>()
-                              .loadInitial(query: state.searchQuery);
-                        },
-                        child: GridView.builder(
-                          key: const Key('catalog-grid'),
-                          controller: _scrollController,
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: const EdgeInsets.all(_gridPadding),
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: _crossAxisCount,
-                            mainAxisExtent: ProductCard.cardHeight,
-                            crossAxisSpacing: _gridSpacing,
-                            mainAxisSpacing: _gridSpacing,
-                          ),
-                          itemCount: state.products.length,
-                          itemBuilder: (context, index) {
-                            final product = state.products[index];
-                            final stockStatus =
-                                state.stockByProductId[product.id] ??
-                                    const StockLoadStatus.loading();
-                            final mediaStatus =
-                                state.mediaByProductId[product.id] ??
-                                    const MediaLoadStatus.loading();
-                            return ProductCard(
-                              key: ValueKey('product-card-${product.id}'),
-                              product: product,
-                              stockStatus: stockStatus,
-                              mediaStatus: mediaStatus,
-                              onAddToCart: widget.onAddToCart == null
-                                  ? null
-                                  : () => widget.onAddToCart!(product),
-                              imageBuilder: widget.imageBuilder,
-                              videoPreviewBuilder: widget.videoPreviewBuilder,
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: (notification) {
+                          if (notification is ScrollUpdateNotification ||
+                              notification is ScrollEndNotification) {
+                            _reportViewportIfNeeded(
+                              notification.metrics,
+                              state.products.length,
+                              force: notification is ScrollEndNotification,
                             );
+                          }
+                          return false;
+                        },
+                        child: RefreshIndicator(
+                          onRefresh: () async {
+                            _resetScrollTracking();
+                            await context
+                                .read<CatalogCubit>()
+                                .loadInitial(query: state.searchQuery);
                           },
+                          child: GridView.builder(
+                            key: const Key('catalog-grid'),
+                            controller: _scrollController,
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: const EdgeInsets.all(_gridPadding),
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: _crossAxisCount,
+                              mainAxisExtent: ProductCard.cardHeight,
+                              crossAxisSpacing: _gridSpacing,
+                              mainAxisSpacing: _gridSpacing,
+                            ),
+                            itemCount: state.products.length,
+                            itemBuilder: (context, index) {
+                              final product = state.products[index];
+                              final stockStatus =
+                                  state.stockByProductId[product.id] ??
+                                      const StockLoadStatus.loading();
+                              final mediaStatus =
+                                  state.mediaByProductId[product.id] ??
+                                      const MediaLoadStatus.loading();
+                              return ProductCard(
+                                key: ValueKey('product-card-${product.id}'),
+                                product: product,
+                                stockStatus: stockStatus,
+                                mediaStatus: mediaStatus,
+                                onAddToCart: widget.onAddToCart == null
+                                    ? null
+                                    : () => widget.onAddToCart!(product),
+                                imageBuilder: widget.imageBuilder,
+                                videoPreviewBuilder: widget.videoPreviewBuilder,
+                              );
+                            },
+                          ),
                         ),
                       ),
                     ),
                   ),
                   if (state.isLoadingMore)
                     const LinearProgressIndicator(minHeight: 2),
+                  if (state.errorMessage != null && state.products.isNotEmpty)
+                    _buildBottomRetryBar(context, state),
                 ],
               );
             },
@@ -347,6 +370,47 @@ class _CatalogPageState extends State<CatalogPage> {
                   context.read<CatalogCubit>().loadInitial(query: query),
               icon: const Icon(Icons.refresh),
               label: const Text('Thử lại'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomRetryBar(BuildContext context, CatalogState state) {
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        child: Row(
+          children: [
+            Icon(
+              Icons.error_outline,
+              size: 18,
+              color: theme.colorScheme.onErrorContainer,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Không thể tải thêm sản phẩm',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onErrorContainer,
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: state.isLoadingMore
+                  ? null
+                  : () {
+                      final cubit = context.read<CatalogCubit>();
+                      if (state.hasMore) {
+                        cubit.loadNextPage();
+                      } else {
+                        cubit.loadInitial(query: state.searchQuery);
+                      }
+                    },
+              child: const Text('Thử lại'),
             ),
           ],
         ),
