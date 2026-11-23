@@ -5,6 +5,7 @@ import fastifyStatic from '@fastify/static';
 import { openDatabase } from './db/database.js';
 import { ensureSampleMedia, seedProducts } from './db/seed.js';
 import { registerProductRoutes } from './routes/products.js';
+import { registerOrderRoutes } from './routes/orders.js';
 
 /**
  * Build and configure the Fastify application instance.
@@ -43,6 +44,7 @@ export function buildApp({
     stockDelayMs,
     mediaDir: resolvedMediaDir,
   });
+  fastify.register(registerOrderRoutes, { db });
 
   fastify.addHook('onClose', async () => {
     db.close();
